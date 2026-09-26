@@ -86,7 +86,7 @@ Matching notes:
 Examples:
 
 ```sh
-LD_PRELOAD=./hide.so HIDE_FILES="secret:./local:/data/system/sh_raw" bash
+LD_PRELOAD=./hide.so HIDE_FILES="secret:./local:/data/tmp" bash
 ```
 
 A targeted example (a specific file disappears):
@@ -145,7 +145,7 @@ Example:
 
 ```sh
 # additionally hide another library
-LD_PRELOAD=./hide.so HIDE_SO="libtarget.so:/data/system/other.so" bash
+LD_PRELOAD=./hide.so HIDE_SO="libtarget.so:./tmp.so" bash
 # those paths disappear from maps/smaps/map_files
 ```
 
@@ -237,7 +237,7 @@ value above.
 
 ```sh
 LD_PRELOAD=/data/local/hide.so \
-HIDE_FILES="/data/system/sh_raw:/data/local/secret" \
+HIDE_FILES="/data/tmp:/data/local/secret" \
 REDIRECT_FILES="/etc/motd=/data/local/motd.fake" \
 HIDE_SO="libtarget.so" \
 HIDE_MOUNT="/data/local/secure" \

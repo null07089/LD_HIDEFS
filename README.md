@@ -89,7 +89,7 @@ LD_PRELOAD=$PWD/hide.so bash
 
 # Hide a file and a directory tree, and redirect another file
 LD_PRELOAD=$PWD/hide.so \
-HIDE_FILES="secret:./local:/data/system/sh_raw" \
+HIDE_FILES="secret:./local:/data/tmp" \
 REDIRECT_FILES="/etc/motd=/data/local/motd.fake" \
 HIDE_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/apex" \
 bash
@@ -130,7 +130,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md). Please read the Disclaimer first.
 
 GNU General Public License v3.0 — see [`LICENSE`](LICENSE).
 
-github@null07089 (C) 2026 hide.so contributors.
+Copyright (C) 2026 null07089.
 
 ---
 
@@ -168,7 +168,7 @@ $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang \
 
 ```sh
 LD_PRELOAD=$PWD/hide.so \
-HIDE_FILES="secret:/data/system/sh_raw" \
+HIDE_FILES="secret:/data/tmp" \
 REDIRECT_FILES="/etc/motd=/data/local/motd.fake" \
 HIDE_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/apex" \
 bash

@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # hide.so 自测：构建后用一组用例验证隐藏/重定向/脱敏/受限前缀等。
 set -u
 D="$(cd "$(dirname "$0")" && pwd)"

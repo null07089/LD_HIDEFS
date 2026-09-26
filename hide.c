@@ -2,7 +2,7 @@
  * hide.so — user-space file hiding, bind-style redirection and /proc sanitization
  *          for Android (bionic), via LD_PRELOAD.
  *
- * github@null07089 (C) 2026 hide.so contributors
+ * Copyright (C) 2026 null07089
  *
  * SPDX-License-Identifier: GPL-3.0
  *

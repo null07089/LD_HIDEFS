@@ -19,7 +19,7 @@
 | `hide.c` | 全部源码 |
 | `hide.so` | 已编译产物 |
 | `test_hide.sh` | 一键自测脚本（构建 + 16 项用例）|
-| `使用文档.md` | 本文档 |
+| `docs/USAGE.md` | 本文档 |
 
 构建：
 
@@ -81,7 +81,7 @@ export LD_PRELOAD=/abs/path/hide.so
 示例：
 
 ```sh
-LD_PRELOAD=./hide.so HIDE_FILES="secret:./local:/data/system/sh_raw" bash
+LD_PRELOAD=./hide.so HIDE_FILES="secret:./local:/data/tmp" bash
 ```
 
 控制示例（指定文件消失）：
@@ -137,7 +137,7 @@ LD_PRELOAD=./hide.so REDIRECT_FILES="/sdcard/secure=/data/local/secure" ls /sdca
 
 ```sh
 # 额外隐藏某个库
-LD_PRELOAD=./hide.so HIDE_SO="libtarget.so:/data/system/other.so" bash
+LD_PRELOAD=./hide.so HIDE_SO="libtarget.so:/tmp/other.so" bash
 # maps/smaps/map_files 中这些路径消失
 ```
 
@@ -222,7 +222,7 @@ LD_PRELOAD=./hide.so HIDE_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/a
 
 ```sh
 LD_PRELOAD=/data/local/hide.so \
-HIDE_FILES="/data/system/sh_raw:/data/local/secret" \
+HIDE_FILES="/data/tmp:/data/local/secret" \
 REDIRECT_FILES="/etc/motd=/data/local/motd.fake" \
 HIDE_SO="libtarget.so" \
 HIDE_MOUNT="/data/local/secure" \

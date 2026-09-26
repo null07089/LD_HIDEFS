@@ -44,4 +44,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed all compile-time defaults (no built-in hidden list, no hard-coded `LD_PRELOAD` target).
 - Added GPL-3.0 license and dual-use disclaimer.
 
-[1.0.0]: https://example.invalid/hide.so/releases/tag/v1.0.0
+[1.0.0]: https://github.com/null07089/LD_HIDEFS/releases/tag/v1.0.0
