@@ -1,0 +1,23 @@
+# Build outputs
+*.o
+*.a
+*.so
+*.so.*
+build/
+out/
+
+# Logs / dumps / test artifacts
+*.log
+*.tmp
+*.orig
+*.rej
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local secrets / environment
+.env
+*.local
