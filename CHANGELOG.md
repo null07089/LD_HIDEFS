@@ -4,6 +4,48 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `ALLOW_ACCESS`: allow-list of absolute paths exempted from `HIDE_FILES` for
+  `fstatat`/`fstatat64`/`faccessat` probes and `execve`; directory entries cover the whole subtree.
+- Interposition of the extended-attribute family (`getxattr`, `lgetxattr`, `listxattr`,
+  `llistxattr`, `setxattr`, `lsetxattr`, `removexattr`, `lremovexattr`), so extended attributes
+  (including the SELinux label `security.selinux`) follow `REDIRECT_FILES`.
+- `umount`/`umount2` return `EINVAL` for mount points hidden by `HIDE_MOUNT`.
+- Central `cfg_vars` table reused for parsing, `getenv` redaction, `/proc/<pid>/environ`
+  sanitization and execve re-injection.
+- Configuration is read at construction by scanning `environ` directly (`raw_getenv`), with no
+  dependency on `dlsym(getenv)`.
+- Buffered (64 KiB) writes for `/proc` text filtering; single-segment cap (`PROC_MAX_SEG`, 8 MiB)
+  with fail-closed behaviour.
+- Directory-map FIFO eviction (oldest entry dropped) instead of refusing new directories.
+- `test_hide.sh` coverage for the new semantics (27 assertions).
+
+### Changed
+
+- **Breaking:** `HIDE_FILES` now accepts **absolute paths only**; bare names and relative paths are
+  ignored with a warning on stderr.
+- **Breaking:** `execve` now participates in `REDIRECT_FILES`, and files matching `HIDE_FILES` are
+  no longer executable (`ENOENT`) unless listed in `ALLOW_ACCESS`.
+- Redirection takes precedence over hiding for the operation: a redirect target is reachable through
+  `src` even if it is itself hidden; direct access to the target remains hidden.
+- **Breaking:** `HIDE_RESTRICTED_PATHS` was renamed to `SKIP_RESTRICTED_PATHS`; the old name is
+  neither parsed nor hidden.
+- Redirection resolves relative paths with proper `dirfd` semantics (via `/proc/self/fd`).
+- Execve environment rebuilding now fails closed with `ENOMEM` instead of leaking unsanitized
+  configuration when allocation fails.
+- `GET_REAL` no longer aborts on a missing optional symbol; hooks degrade to `ENOSYS`.
+- Hidden-path ancestor matching is allocation-free and path entries are length-sorted for early
+  exit; inode identities moved to a dedicated table.
+
+### Removed
+
+- Bare-name and relative-path `HIDE_FILES` entries.
+- `realpath` fallback for `SKIP_RESTRICTED_PATHS` symlink targets; matching now uses the lexical
+  absolute path only.
+
 ## [1.0.0] - 2026-09-26
 
 ### Added

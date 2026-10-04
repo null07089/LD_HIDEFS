@@ -18,7 +18,7 @@
 |---|---|
 | `hide.c` | 全部源码 |
 | `hide.so` | 已编译产物 |
-| `test_hide.sh` | 一键自测脚本（构建 + 16 项用例）|
+| `test_hide.sh` | 一键自测脚本（构建 + 27 项用例）|
 | `docs/USAGE.md` | 本文档 |
 
 构建：
@@ -48,58 +48,92 @@ export LD_PRELOAD=/abs/path/hide.so
 
 | 环境变量 | 作用 | 分隔/格式 | 未设置时 |
 |---|---|---|---|
-| `HIDE_FILES` | 隐藏文件/目录 | `name:./rel:/abs` | 不隐藏任何东西 |
-| `REDIRECT_FILES` | 用户态 bind 重定向 | `src=dst[:...]` | 不重定向 |
+| `HIDE_FILES` | 隐藏文件/目录（**仅绝对路径**） | `/a/b:/c/d` | 不隐藏任何东西 |
+| `ALLOW_ACCESS` | 放行名单：豁免 fstatat/faccessat/execve 的隐藏判定 | `/a/b:/c/d` | 无豁免 |
+| `REDIRECT_FILES` | 用户态 bind 重定向（含 `execve` 与扩展属性） | `src=dst[:...]` | 不重定向 |
 | `HIDE_SO` | 在 maps/smaps/map_files 中隐藏库 | `lib.so:/path/lib.so` | 仅自动隐藏 `LD_PRELOAD` 自身 |
 | `HIDE_MOUNT` | 隐藏挂载点 | `/data:/mnt/secret` | 不隐藏挂载 |
-| `HIDE_RESTRICTED_PATHS` | 受限 linker namespace 前缀 | `/vendor:/odm:...` | 不限制（Android 上建议设置）|
+| `SKIP_RESTRICTED_PATHS` | 跳过注入的路径前缀（受限 linker namespace） | `/vendor:/odm:...` | 不跳过 |
 
-以上 5 个变量一旦设置都会被**彻底隐藏**（详见 §7）。
+以上 6 个变量一旦设置都会被**彻底隐藏**（详见 §8）。
+
+> v1.0 的 `HIDE_RESTRICTED_PATHS` 已更名为 `SKIP_RESTRICTED_PATHS`；旧名不再解析、也不隐藏。
 
 ---
 
 ## 3. HIDE_FILES —— 隐藏文件/目录
 
-格式：冒号分隔，每个条目三种写法：
+格式：冒号分隔的**绝对路径**列表。**只支持绝对路径**：
+非绝对路径条目会被忽略并在 stderr 打印告警（请自行展开为绝对路径）。
 
-| 写法 | 含义 |
-|---|---|
-| `name` | **裸名**：任意路径中命中该名字即隐藏（全局）|
-| `./name` | **相对路径**：只隐藏“本库初始化时进程 cwd 下”的该条目 |
-| `/a/b/name` | **绝对路径**：只隐藏这一条路径；若它是目录，则其**所有后代**也隐藏 |
+匹配规则：
 
-匹配要点：
-
-- 裸名按“路径分量全等”匹配（`namex` 不会命中 `name`）。
-- 路径条目在初始化时做 `realpath` 规范化；实际判断时：
-  - 先字符串精确/前缀匹配；
-  - 再用 **inode 身份**（`st_dev`+`st_ino`）匹配，可跨绑定挂载别名（如 `/data/data` ↔ `/data/user/0`）和符号链接；
-  - 目录条目会向上回溯父目录 inode，命中即视为“目录内”。
-- 被隐藏后，`stat/lstat/access/open/opendir/readlink/rename/unlink/chmod/...` 一律返回 `ENOENT`；
-  目录列举（`readdir/readdir64/scandir`）中也会被过滤掉。
+- 路径**精确命中**，或以 `/` 为边界的**目录前缀命中**（目录命中则整棵子树隐藏）；
+- 初始化时做 `realpath` 规范化；运行期先字符串匹配，再用 **inode 身份**（`st_dev`+`st_ino`）
+  匹配，可跨绑定挂载别名（如 `/data/data` ↔ `/data/user/0`）和符号链接；
+- 目录条目会向上回溯父目录 inode，命中即视为“目录内”；
+- 被隐藏后，`stat/lstat/access/open/opendir/readlink/rename/unlink/chmod/xattr/...` 一律返回
+  `ENOENT`；目录列举（`readdir/readdir64/scandir`）中也会被过滤掉；
+- **`execve` 也受隐藏判定**：命中 `HIDE_FILES` 且不在 `ALLOW_ACCESS` 中的文件不允许执行
+  （返回 `ENOENT`）。这是相对 v1.0 的行为变化（旧版隐藏文件仍可被 exec）。
 
 示例：
 
 ```sh
-LD_PRELOAD=./hide.so HIDE_FILES="secret:./local:/data/tmp" bash
+# 隐藏 /data/tmp 与 /data/local/secret（含其后代）
+LD_PRELOAD=./hide.so HIDE_FILES="/data/tmp:/data/local/secret" bash
+
+# 指定文件消失
+LD_PRELOAD=./hide.so HIDE_FILES=/tmp/secret bash -c 'ls /tmp; cat /tmp/secret'
 ```
 
-控制示例（指定文件消失）：
+> 裸名（`name`）与相对路径（`./name`）在当前版本已不再支持；请改写为绝对路径。
+
+---
+
+## 4. ALLOW_ACCESS —— 放行名单
+
+格式：冒号分隔的**绝对路径**列表；目录条目对整棵子树生效（命中精确路径，或以 `/` 为边界的
+子路径）。非绝对路径条目被忽略并告警。
+
+作用范围**只有两个**：
+
+1. `fstatat`/`fstatat64`/`faccessat` 探测：
+   - 本次操作命中重定向时跳过隐藏（目标即便在 `HIDE_FILES` 中也可达）；
+   - 否则对字面路径判定，命中名单才豁免 `HIDE_FILES`；
+2. `execve`：字面路径命中名单时，**走原路径直接执行**，既不重定向也不隐藏。
+
+其余钩子（`stat`/`lstat`/`statx`/`access`/`open`/`readlink`/…）**不受** `ALLOW_ACCESS` 影响，
+隐藏名单照常生效。
+
+> bionic 无 `newfstatat` 符号，其语义即 `fstatat`/`fstatat64`。
+
+示例：
 
 ```sh
-LD_PRELOAD=./hide.so HIDE_FILES=/tmp/secret bash -c 'ls /tmp; cat /tmp/secret'
+# secret 整体隐藏，但 secret/keep 允许被探测与执行
+LD_PRELOAD=./hide.so HIDE_FILES=/data/local/secret \
+  ALLOW_ACCESS=/data/local/secret/keep bash
 ```
 
 ---
 
-## 4. REDIRECT_FILES —— 用户态 bind 重定向
+## 5. REDIRECT_FILES —— 用户态 bind 重定向
 
-格式：`src=dst`，冒号分隔多条；首个 `=` 分割。
+格式：`src=dst`，冒号分隔多条；首个 `=` 分割。相对路径按 `dirfd` 语义解析（`/proc/self/fd`）。
 
 - `src` 是**文件** → 精确替换为 `dst`；
-- `src` 是**目录** → 前缀替换（`src/xxx` → `dst/xxx`）。
+- `src` 是**目录** → 前缀替换（`src/xxx` → `dst/xxx`）；
+- 第一条命中的规则生效，不链式。
 
-重定向对读写类操作透明生效：`stat/open/access/opendir/readlink/unlink/rename/chmod/utimes/truncate/creat/fopen/statfs/...`。
+重定向对读写/属性/扩展属性等操作透明生效：`stat/open/access/opendir/readlink/unlink/rename/
+chmod/utimes/truncate/creat/fopen/statfs/getxattr/setxattr/listxattr/...`。
+**`execve` 同样参与重定向**：命中 `src` 时路径会被改写为 `dst` 再执行。
+
+优先级：**本次操作命中重定向时跳过 `HIDE_FILES` 判定**——即便 `dst` 本身在隐藏名单中，
+经 `src` 访问仍可达（视为“`dst` 是本次重定向的目标”）；直接访问 `dst`（未重定向）仍照常隐藏。
+
+扩展属性同样改写，因此 SELinux 标签（`security.selinux`）随重定向变为 `dst` 的标签。
 
 示例：
 
@@ -109,18 +143,15 @@ LD_PRELOAD=./hide.so REDIRECT_FILES="/etc/motd=/data/motd.fake" cat /etc/motd
 
 # 目录整体重定向
 LD_PRELOAD=./hide.so REDIRECT_FILES="/sdcard/secure=/data/local/secure" ls /sdcard/secure
+
+# 目标本身被隐藏，经 src 仍可达；直接访问 dst 仍隐藏
+LD_PRELOAD=./hide.so HIDE_FILES=/data/real \
+  REDIRECT_FILES="/data/alias=/data/real" cat /data/alias
 ```
-
-### 重要例外：`execve` 不参与重定向
-
-- `execve` 始终执行**字面路径**，因此也能执行被 `HIDE_FILES` 隐藏的原文件。
-- 因此“把 `/system/bin/sh` 重定向到自己的 wrapper”这类需求**不通过重定向实现**；
-  可靠做法是在 PATH 更靠前的位置放一个**可见的** wrapper，或直接调用绝对路径。
-- 规则 `a=b` 只把“读 a”变成“读 b”，不会反向影响执行 b。
 
 ---
 
-## 5. HIDE_SO —— 隐藏动态库路径
+## 6. HIDE_SO —— 隐藏动态库路径
 
 作用对象：
 
@@ -147,15 +178,18 @@ LD_PRELOAD=./hide.so HIDE_SO="libtarget.so:/tmp/other.so" bash
 
 ---
 
-## 6. HIDE_MOUNT —— 隐藏挂载信息
+## 7. HIDE_MOUNT —— 隐藏挂载信息
 
 作用对象：
 
 - `/proc/<pid>/mounts`、`/proc/<pid>/mountinfo`、`/proc/<pid>/mountstat`、`/proc/<pid>/mountstats`
   （同时支持无 pid 形式 `/proc/mounts` 等）
 - `statfs`/`statfs64`/`statvfs`/`statvfs64`：被隐藏挂载点返回 `ENOENT`
+- `umount`/`umount2`：被隐藏挂载点返回 `EINVAL`（直接 `syscall(SYS_umount2,...)` 无法拦截）
 
 格式：`:` 分隔路径；匹配挂载点**精确**或**前缀**（`/a` 命中 `/a` 及 `/a/...`）。
+
+> 注意：不影响目录列举——`readdir/scandir` 仍会列出该挂载点。
 
 示例：
 
@@ -163,27 +197,29 @@ LD_PRELOAD=./hide.so HIDE_SO="libtarget.so:/tmp/other.so" bash
 LD_PRELOAD=./hide.so HIDE_MOUNT="/data:/mnt/secret" bash
 cat /proc/self/mounts   # /data 等条目消失
 stat -f /data           # 失败（ENOENT）
+umount /data            # 失败（EINVAL）
 ```
 
 ---
 
-## 7. 环境变量自隐藏机制
+## 8. 环境变量自隐藏机制
 
-所有已设置的配置变量（`HIDE_FILES`、`REDIRECT_FILES`、`HIDE_RESTRICTED_PATHS`、`HIDE_SO`、`HIDE_MOUNT`、
-以及等于目标的 `LD_PRELOAD`）都会：
+所有已设置的配置变量（`HIDE_FILES`、`ALLOW_ACCESS`、`REDIRECT_FILES`、`SKIP_RESTRICTED_PATHS`、
+`HIDE_SO`、`HIDE_MOUNT`，以及等于目标的 `LD_PRELOAD`）都会：
 
 1. **构造期从自身 `environ` 数组原地删除**（移位 + 置 NULL，非 `unsetenv`）：
    `echo $VAR`、`env`、`printenv`、`env | grep` 均看不到；
 2. `getenv()` / `secure_getenv()` 返回 `NULL`；
 3. `/proc/<pid>/environ` 读取时脱敏（memfd 返回过滤后的内容）；
 4. **动态子进程 execve 时回注**，使子进程仍加载 hide.so 且继承配置；
-5. **静态链接目标 / 受限 namespace 目标剥离**，不回注，避免泄露。
+5. **静态链接目标 / `SKIP_RESTRICTED_PATHS` 命中目标剥离**，不回注，避免泄露。
 
 > 注意：子进程“先回注、再在其构造函数里原地删除”，逐层递归，稳定。
+> 构造期直接扫描 `environ` 读取配置，不依赖 `dlsym(getenv)`，因此不会漏删泄露。
 
 ---
 
-## 8. HIDE_RESTRICTED_PATHS —— 受限 linker namespace
+## 9. SKIP_RESTRICTED_PATHS —— 受限 linker namespace
 
 Android 上 `/vendor`、`/odm`、`/product`、`/system_ext`、`/apex` 等分区的可执行文件运行在受限
 linker namespace，其 `permitted_paths` 不允许从 `/data` 注入 `LD_PRELOAD`，否则会报：
@@ -193,89 +229,108 @@ WARNING: linker: library ... is not accessible for the namespace ...
 CANNOT LINK EXECUTABLE ...: library ... is not accessible for the namespace
 ```
 
-因此这些目标必须剥离注入。用该变量列出前缀：
+因此这些目标必须剥离注入。用该变量列出前缀（v1.0 中名为 `HIDE_RESTRICTED_PATHS`）：
 
 ```sh
-LD_PRELOAD=./hide.so HIDE_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/apex" bash
+LD_PRELOAD=./hide.so SKIP_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/apex" bash
 ```
 
-命中（前缀边界匹配）时：剥离 `LD_PRELOAD` 与全部配置、不注入。
+命中（前缀边界匹配）时：剥离 `LD_PRELOAD` 与全部配置、不注入，与静态目标同样处理。
 未设置则不限制——在 Android 上强烈建议设置上面的值。
+
+> 匹配基于词法绝对化后的字面路径，不再对符号链接做 `realpath` 兜底；
+> 若可执行文件是符号链接且真实目标位于受限前缀，请把链接所在前缀也一并列出。
 
 ---
 
-## 9. execve 行为小结
+## 10. execve 行为小结
 
-- **不隐藏**：可执行被 `HIDE_FILES` 隐藏的文件（隐藏只影响读写及目录列举）。
-- **不重定向**：执行字面路径。
+- **受隐藏**：命中 `HIDE_FILES` 且不在 `ALLOW_ACCESS` 中的文件不允许执行（`ENOENT`）。
+- **参与重定向**：先按 `REDIRECT_FILES` 改写路径；命中重定向时本次跳过隐藏判定。
+- `ALLOW_ACCESS` 优先：字面路径命中名单时走原路径，不重定向也不隐藏。
 - 会做环境处理：
   - 目标为**静态链接**（无 `PT_INTERP`，含脚本 shebang 解析）→ 剥离全部配置；
-  - 目标为**受限 namespace** → 剥离全部配置；
+  - 目标为 **`SKIP_RESTRICTED_PATHS` 命中** → 剥离全部配置；
   - 目标为**动态且能保证加载 hide.so**（本进程经 `LD_PRELOAD` 加载，回注有效）→ 回注配置；
   - 本进程若非经 `LD_PRELOAD` 加载（无从保证子进程加载 hide.so）→ 只剥离不回注，避免泄露。
+- 环境重写内存分配失败时**失败关闭**（返回 `ENOMEM`），绝不把未脱敏配置传给子进程。
 - 运行期若程序自行修改 `LD_PRELOAD`（`setenv`/`putenv`/`unsetenv`/`clearenv`，或直接改了 envp，
   如 bash `export`）且新值不等于当前目标 → **停止接管** `LD_PRELOAD`（不再剥离/回注），尊重用户设置。
 
 ---
 
-## 10. 组合示例
+## 11. 组合示例
 
 ```sh
 LD_PRELOAD=/data/local/hide.so \
 HIDE_FILES="/data/tmp:/data/local/secret" \
+ALLOW_ACCESS="/data/local/secret/keep" \
 REDIRECT_FILES="/etc/motd=/data/local/motd.fake" \
 HIDE_SO="libtarget.so" \
 HIDE_MOUNT="/data/local/secure" \
-HIDE_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/apex" \
+SKIP_RESTRICTED_PATHS="/vendor:/odm:/product:/system_ext:/apex" \
 bash
 ```
 
 ---
 
-## 11. 工作原理
+## 12. 工作原理
 
-- 钩子通过 `dlsym(RTLD_NEXT, ...)` 取得真实函数；用 `GET_REAL` 宏统一懒加载（加锁串行化）。
-- 路径匹配优先“零系统调用”的词法规范化；路径条目的 inode 身份用直连 `fstatat` 系统调用获取。
-- 重定向改写路径到**栈上 alloca 缓冲**（每次调用独立，避免多路径/重入互相覆盖）。
-- `/proc` 文本脱敏采用**流式过滤**：边读边写 `memfd`，只保留一个不完整尾段；失败关闭（绝不返回原始内容）。
+- 钩子通过 `dlsym(RTLD_NEXT, ...)` 取得真实函数；用 `GET_REAL` 宏统一懒加载（加锁串行化），
+  缺失符号时降级为 `ENOSYS` 而非退出。
+- 路径匹配优先“零系统调用”的词法规范化（含无 `.`/`..` 的绝对路径快路径）；路径条目的 inode
+  身份用直连 `fstatat` 系统调用获取，并按长度排序以提前退出匹配。
+- 重定向改写路径到**栈上 alloca 缓冲**（每次调用独立，避免多路径/重入互相覆盖）；命中目标用
+  TLS 记录，嵌套钩子（如 `stat→fstatat`、`realpath→lstat`）在本次操作内一并豁免隐藏。
+- `/proc` 文本脱敏采用**流式过滤**：边读边写 `memfd`，64 KiB 聚合写出，只保留一个不完整尾段；
+  单条超过 8 MiB 或写入失败则**失败关闭**（绝不返回原始内容）。
 - `map_files` 通过 `readlinkat` 目标匹配 HIDE_SO。
 - 为规避 libc 内部递归，`stat` 族用直连系统调用；`realpath` 仅在确有需要时解析。
+- 大量钩子由 `W_*` 宏生成（路径/双路径/at 变体），统一执行“重定向 → 隐藏判定 → 真实调用”。
 
-性能：无配置时各钩子走零成本快速路径；纯裸名配置几乎与不加载相当；目录列举使用
-`d_ino` 快速过滤与线程内“干净目录”缓存，避免逐项 `stat`。
+性能：无配置时各钩子走零成本快速路径；路径条目按长度排序、祖先回溯零分配；目录列举使用
+`d_ino` 快速过滤与线程内“干净目录”缓存，避免逐项 `stat`；目录映射满时按 FIFO 淘汰，保证最近
+打开的目录仍可跟踪。
 
 ---
 
-## 12. 已知限制
+## 13. 已知限制
 
-1. **`syscall()` 直接调用绕过所有钩子**（如部分 gnulib/coreutils 用原始 `renameat2`、`getdents64`）。
+1. **`HIDE_FILES` 仅支持绝对路径**；裸名/相对路径被忽略并告警。相对路径需调用方自行展开。
+2. **`syscall()` 直接调用绕过所有钩子**（如部分 gnulib/coreutils 用原始 `renameat2`、`getdents64`）。
    这是 `LD_PRELOAD` 的固有边界。bionic 未导出 `getdents/getdents64`，无法钩。
-2. `/proc/<pid>/mem`、`/proc/<pid>/pagemap` 是二进制、不含路径，无法做路径隐藏。
-3. 钩子非 `async-signal-safe`（含 `malloc`/锁），**信号处理器内**调用有死锁/崩溃风险。
-4. 运行期程序自行 `setenv/putenv` 的 `HIDE_*` 变量未被跟踪（仅跟踪 `LD_PRELOAD`）；`env` 可能短暂可见，
+3. `/proc/<pid>/mem`、`/proc/<pid>/pagemap` 是二进制、不含路径，无法做路径隐藏。
+4. 钩子非 `async-signal-safe`（含 `malloc`/锁），**信号处理器内**调用有死锁/崩溃风险。
+5. 运行期程序自行 `setenv/putenv` 的 `HIDE_*` 变量未被跟踪（仅跟踪 `LD_PRELOAD`）；`env` 可能短暂可见，
    但 `getenv` 与 execve 仍会处理。
-5. “干净目录”缓存与路径条目 inode 身份在初始化时确定；运行期挂载/符号链接变化可能导致判定过期。
-6. `MAXHIDE=64`、`MAXREDIR=32`、`MAXRPRE=32`、`MAXTOK=64`、`MAXDIRS=256` 为编译期上限，超出静默丢弃。
-7. 目录映射表 `MAXDIRS` 满后，新目录不再记录，`readdir` 的绝对路径/`map_files` 过滤可能退化。
-8. `env -i` 等自定义 envp 会被强制回注配置（隐藏无法绕过，属设计取舍）。
+6. “干净目录”缓存、路径条目 inode 身份与 `ALLOW_ACCESS` 词法展开在初始化时确定；运行期挂载/
+   符号链接变化可能导致判定过期。
+7. `MAXHIDE=64`、`MAXALLOW=64`、`MAXREDIR=32`、`MAXRPRE=32`、`MAXTOK=64`、`MAXDIRS=256`
+   为编译期上限，超出静默丢弃（目录映射满时 FIFO 淘汰）。
+8. `HIDE_MOUNT` 不影响 `readdir/scandir` 的目录列举，仅过滤 `/proc` 挂载信息与 statfs/umount。
+9. `env -i` 等自定义 envp 会被强制回注配置（隐藏无法绕过，属设计取舍）。
 
 ---
 
-## 13. 自测
+## 14. 自测
 
 ```sh
 bash test_hide.sh
 ```
 
-覆盖：配置隐藏、文件隐藏、重定向、双路径重定向回归、`HIDE_SO`（maps/smaps/自动隐藏）、
-`/proc/mounts`、`statfs`、受限前缀等，共 16 项。
+覆盖：配置隐藏、绝对路径隐藏、相对条目忽略、`ALLOW_ACCESS`（fstatat/faccessat/execve）、
+重定向（含隐藏目标可达、`execve` 重定向、双路径回归）、`HIDE_SO`（maps/smaps/自动隐藏）、
+`/proc/mounts`、`statfs`、`SKIP_RESTRICTED_PATHS` 等，共 27 项。
 
 ---
 
-## 14. 常见问题（FAQ）
+## 15. 常见问题（FAQ）
 
 **Q：为什么 `ls` 看不到隐藏文件，但 `mv` 还能操作它？**
 A：`HIDE_FILES` 通过钩子过滤，但某些程序用原始系统调用（绕过 libc 包装）会穿透；日常工具（ls/cat/rm 等）正常。
+
+**Q：为什么我写了 `HIDE_FILES=secret` 却没有任何效果？**
+A：当前版本起 `HIDE_FILES` 只接受绝对路径；裸名/相对路径会被忽略并向 stderr 告警。请写完整绝对路径。
 
 **Q：为什么隐藏 `/system/bin/sh` 后有些命令报 `Permission denied` / 回退到 `/vendor/bin/sh`？**
 A：shell 的命令解析会用 `stat/access` 扫 PATH，隐藏使 `/system/bin/sh` 被跳过，于是回退到 PATH 里
@@ -283,10 +338,14 @@ A：shell 的命令解析会用 `stat/access` 扫 PATH，隐藏使 `/system/bin/
 需要替换行为时在 PATH 更靠前放一个**可见的** wrapper。
 
 **Q：`execve` 会执行被隐藏/被重定向的文件吗？**
-A：会执行字面路径——即被隐藏的原文件仍可执行；重定向对 `execve` 不生效。
+A：隐藏文件默认**不可执行**（`ENOENT`），除非在 `ALLOW_ACCESS` 中；重定向对 `execve` 生效，
+命中 `src` 时会执行 `dst`。
 
 **Q：如何只隐藏 `hide.so` 自身？**
 A：不用配置。加载后会自动把 `LD_PRELOAD` 值 realpath 后加入 `HIDE_SO`，从 maps/smaps/map_files 中隐藏。
 
 **Q：为什么设置的环境变量 `echo $HIDE_FILES` 是空的？**
 A：这是设计：所有配置变量在构造期从自身环境原地删除，`env/getenv/printenv/echo` 都看不到。
+
+**Q：旧的 `HIDE_RESTRICTED_PATHS` 还能用吗？**
+A：不能。旧名已更名为 `SKIP_RESTRICTED_PATHS`，旧名不再解析，也不会被隐藏——请改用新名。

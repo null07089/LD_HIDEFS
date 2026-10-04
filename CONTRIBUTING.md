@@ -28,9 +28,11 @@ $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang \
 bash test_hide.sh
 ```
 
-The test builds `hide.so` in a temporary directory and runs assertions covering configuration
-self-hiding, file hiding, redirection, `HIDE_SO`, `HIDE_MOUNT`, `statfs`, and restricted paths.
-Please add a case for any bug fix or new feature.
+The test builds `hide.so` in a temporary directory and runs 27 assertions covering configuration
+self-hiding, absolute-path file hiding, `ALLOW_ACCESS` (fstatat/faccessat/execve), redirection
+(including hidden-target reachability and `execve` redirect), `HIDE_SO`, `HIDE_MOUNT`
+(`/proc/mounts`, `statfs`), and `SKIP_RESTRICTED_PATHS`. Please add a case for any bug fix or new
+feature.
 
 ### Style
 
